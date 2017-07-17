@@ -6,7 +6,7 @@
 #include <MyTools/Character.h>
 
 #pragma comment(lib,"DbgHelp.lib")
-#ifdef _WIN32
+
 CPELoader::~CPELoader()
 {
 	if (_bAlloc)
@@ -105,7 +105,7 @@ BOOL CPELoader::GetVecImportTable(_Out_ std::vector<ImportTable>& Vec) CONST
 		{
 			ImportDLLTable DLLTable;
 
-			if (HIWORD(dwThunkValue) == 0x8000)
+			if (dwThunkValue & IMAGE_ORDINAL_FLAG32)
 				DLLTable.wsAPIName = L"--";
 			else
 			{
@@ -265,13 +265,26 @@ BOOL CPELoader::_LoadLibrary()
 		return FALSE;
 
 	//
-	auto pDosHeader = AllocAndCopyPeHeader(pCode);
-	if (pDosHeader == nullptr)
+	auto pNewDosHeader = AllocAndCopyPeHeader(pCode);
+	if (pNewDosHeader == nullptr)
 		return FALSE;
 
 	//
-	if (CopySection(reinterpret_cast<UCHAR*>(pCode), pDosHeader))
+	if (CopySection(reinterpret_cast<UCHAR*>(pCode), pNewDosHeader))
 		return FALSE;
+
+	//
+	DWORD64 dwLocationDelta = static_cast<DWORD64>(GetNtHeader(pNewDosHeader)->OptionalHeader.ImageBase - pNtHeader->OptionalHeader.ImageBase);
+	if (dwLocationDelta != NULL && !Relocation(dwLocationDelta, reinterpret_cast<UCHAR*>(pCode), pNewDosHeader)) // Relocation
+		return FALSE;
+
+	//
+	if (!ReBuileImportTable(reinterpret_cast<DWORD>(pCode), pNewDosHeader))
+		return FALSE;
+
+	// UnUseful
+	//if (!ReBuileExportTable(reinterpret_cast<DWORD>(pCode), pNewDosHeader))
+	//	return FALSE;
 
 
 
@@ -359,7 +372,11 @@ PIMAGE_DOS_HEADER CPELoader::AllocAndCopyPeHeader(LPVOID pCode) CONST
 
 	// Set New ImageBase
 	auto pNewNtHeader = GetNtHeader(pNewDosHeader);
+#ifdef _WIN64
+	pNewNtHeader->OptionalHeader.ImageBase = reinterpret_cast<DWORD64>(pCode);
+#else
 	pNewNtHeader->OptionalHeader.ImageBase = reinterpret_cast<DWORD>(pCode);
+#endif // _WIN64
 	return pNewDosHeader;
 }
 
@@ -409,6 +426,133 @@ BOOL CPELoader::CopySection(_In_ UCHAR* pCode, _In_ PIMAGE_DOS_HEADER pDosHeader
 
 BOOL CPELoader::Relocation(_In_ LONGLONG LocationDelta, _In_ UCHAR* pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST
 {
+	auto pNtHeader = GetNtHeader(pDosHeader);
+	auto pDirectoryBaseReloc = &pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC];
+	if (pDirectoryBaseReloc->Size == NULL)
+	{
+		_SetErrMsg(L"pDirectoryBaseReloc->Size = 0");
+		return FALSE;
+	}
+
+	auto pBaseRelocation = reinterpret_cast<PIMAGE_BASE_RELOCATION>(pCode + pDirectoryBaseReloc->VirtualAddress);
+	while (pBaseRelocation->VirtualAddress != 0)
+	{
+		DWORD dwRelocationBase = reinterpret_cast<DWORD>(pCode) + pBaseRelocation->VirtualAddress;
+		USHORT* pRelocationInfo = reinterpret_cast<USHORT*>(reinterpret_cast<DWORD>(pBaseRelocation) + sizeof(IMAGE_BASE_RELOCATION));
+
+		int nMaxSize = (pBaseRelocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / 2;
+		for (int i = 0;i < nMaxSize; ++i, ++pRelocationInfo)
+		{
+			DWORD dwOffset = *pRelocationInfo & 0xFFF;
+			switch (*pRelocationInfo >> 12)
+			{
+			case IMAGE_REL_BASED_ABSOLUTE:
+				break;
+			case IMAGE_REL_BASED_HIGHLOW: // x86
+				*reinterpret_cast<DWORD*>(pBaseRelocation + dwOffset) += static_cast<DWORD>(LocationDelta);
+				break;
+#ifdef _WIN64
+			case IMAGE_REL_BASED_DIR64: // x64
+				*reinterpret_cast<ULONGLONG*>(pBaseRelocation + dwOffset) += LocationDelta;
+				break;
+#endif // _WIN64
+			
+			default:
+				break;
+			}
+		}
+
+		pBaseRelocation = reinterpret_cast<PIMAGE_BASE_RELOCATION>(reinterpret_cast<DWORD>(pBaseRelocation) + pBaseRelocation->SizeOfBlock);
+	}
+
+	return TRUE;
+}
+
+BOOL CPELoader::ReBuileImportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST
+{
+	auto pNtHeader = GetNtHeader(pDosHeader);
+	auto pImportDirectory = reinterpret_cast<PIMAGE_DATA_DIRECTORY>(GetDataDirectory(pNtHeader->OptionalHeader.DataDirectory, IMAGE_DIRECTORY_ENTRY_IMPORT));
+	if (pImportDirectory->Size == 0)
+		return TRUE;
+
+	for (auto pImortDescipor = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(pCode + pImportDirectory->VirtualAddress); pImortDescipor->FirstThunk != NULL; pImortDescipor++)
+	{
+		// repalace to _LoadLibrary?
+		CONST CHAR* pszDLLName = reinterpret_cast<CONST CHAR*>(pCode + pImortDescipor->Name);
+		HMODULE hmDLL = ::LoadLibraryA(pszDLLName);
+		if (hmDLL == NULL)
+		{
+			_SetErrMsg(L"Load ImportTable DLL[%s] Faild!!!", MyTools::CCharacter::ASCIIToUnicode(std::string(pszDLLName)).c_str());
+			return FALSE;
+		}
+
+		DWORD* pdwThunk = nullptr;
+		DWORD* pdwFunc = nullptr;
+
+		// OriginalFirstThunk -> INT Table
+		// FirstThunk -> IAT Table
+		if (pImortDescipor->OriginalFirstThunk)
+		{
+			pdwThunk = reinterpret_cast<DWORD*>(pCode + pImortDescipor->OriginalFirstThunk); 
+			pdwFunc = reinterpret_cast<DWORD*>(pCode + pImortDescipor->FirstThunk);
+		}
+		else
+		{
+			pdwFunc = pdwThunk = reinterpret_cast<DWORD*>(pCode + pImortDescipor->FirstThunk);
+		}
+
+		for (; *pdwThunk != NULL;pdwFunc++, pdwThunk++)
+		{
+			if (*pdwThunk & IMAGE_ORDINAL_FLAG32)
+			{
+				// For Original
+				auto dwOriginal = *pdwThunk & 0xFFFF;
+				*pdwFunc = reinterpret_cast<DWORD>(::GetProcAddress(hmDLL, reinterpret_cast<LPCSTR>(dwOriginal)));
+				if (*pdwFunc == NULL)
+				{
+					_SetErrMsg(L"DLL[%s] Proc Address By Original[%X] Load Faild!", 
+						MyTools::CCharacter::ASCIIToUnicode(std::string(pszDLLName)).c_str(), dwOriginal);
+					return FALSE;
+				}
+			}
+			else
+			{
+				// For Name
+				PIMAGE_IMPORT_BY_NAME pImportName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(pCode + *pdwThunk/*RVA*/);
+				*pdwFunc = reinterpret_cast<DWORD>(::GetProcAddress(hmDLL, pImportName->Name));
+				if (*pdwFunc == NULL)
+				{
+					_SetErrMsg(L"DLL[%s] Proc Address By Name[%X] Load Faild!", 
+						MyTools::CCharacter::ASCIIToUnicode(std::string(pszDLLName)).c_str(), 
+						MyTools::CCharacter::ASCIIToUnicode(std::string(pImportName->Name)).c_str());
+					return FALSE;
+				}
+			}
+		}
+	}
+
+	return TRUE;
+}
+
+BOOL CPELoader::ReBuileExportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST
+{
+	return TRUE;
+}
+
+BOOL CPELoader::ReBuileSection(_In_ DWORD dwPageSize, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST
+{
+	auto pNtHeader = GetNtHeader(pDosHeader);
+	
+#ifdef _WIN64
+	UINT ImageOffset = static_cast<UINT>(pNtHeader->OptionalHeader.ImageBase & 0xffffffff00000000);
+#else
+	UINT ImageOffset = 0;
+#endif // _WIN64
+
+	// Convert DLL Attribute to Memory Attribute
+
+	// ..................
+
 	return TRUE;
 }
 
@@ -523,7 +667,13 @@ LPVOID CPELoader::GetDataDirectory(_In_ int DirectoryOrder) CONST
 		_SetErrMsg(L"pDataDirectoryArray = nullptr");
 		return nullptr;
 	}
-	else if (DirectoryOrder < 0 || DirectoryOrder >= 16)
+
+	return GetDataDirectory(pDataDirectoryArray, DirectoryOrder);
+}
+
+LPVOID CPELoader::GetDataDirectory(_In_ PIMAGE_DATA_DIRECTORY pDataDirectoryArray, _In_ int DirectoryOrder) CONST
+{
+	if (DirectoryOrder < 0 || DirectoryOrder >= 16)
 	{
 		_SetErrMsg(L"DirectoryOrder = %d", DirectoryOrder);
 		return nullptr;
@@ -538,5 +688,3 @@ LPVOID CPELoader::GetDataDirectory(_In_ int DirectoryOrder) CONST
 
 	return RVAToVA(pDataDirectory->VirtualAddress);
 }
-
-#endif

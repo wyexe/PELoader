@@ -4,7 +4,7 @@
 #include <map>
 #include <MyTools/ToolsPublic.h>
 
-#ifdef _WIN32
+
 class CPELoader
 {
 public:
@@ -65,6 +65,15 @@ private:
 
 	// Relocation
 	BOOL Relocation(_In_ LONGLONG LocationDelta, _In_ UCHAR* pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
+
+	// 
+	BOOL ReBuileImportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
+
+	//
+	BOOL ReBuileExportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
+
+	//
+	BOOL ReBuileSection(_In_ DWORD dwPageSize, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
 private:
 	CONST PIMAGE_DOS_HEADER GetDosHeader() CONST;
 
@@ -87,12 +96,13 @@ private:
 	LPVOID RVAToPtr(_In_ DWORD dwRva) CONST;
 
 	LPVOID GetDataDirectory(_In_ int DirectoryOrder) CONST;
+
+	LPVOID GetDataDirectory(_In_ PIMAGE_DATA_DIRECTORY pDataDirectoryArray, _In_ int DirectoryOrder) CONST;
 private:
 	BOOL   _bAlloc = FALSE;
 	LPVOID _pvFileContent;
 	UINT   _uFileSize;
 };
-#endif // _WIN32
 
 
 
