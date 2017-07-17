@@ -48,6 +48,14 @@ public:
 	//
 	BOOL _LoadLibrary();
 private:
+	struct SectionAttribute
+	{
+		DWORD dwCharacteristics;
+		DWORD dwSectionSize;
+		DWORD dwSectionRVA;
+		DWORD dwSectionAligned;
+	};
+
 	// 
 	DWORD GetAlignedImageSize() CONST;
 
@@ -73,7 +81,19 @@ private:
 	BOOL ReBuileExportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
 
 	//
-	BOOL ReBuileSection(_In_ DWORD dwPageSize, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
+	BOOL ReBuileSection(_In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
+
+	//
+	SectionAttribute&& FillSectionAttribute(_In_ PIMAGE_NT_HEADERS pNtHeader, _In_ CONST SectionAttribute* pSectionAttribute, _In_ DWORD dwPageSize, _In_ PIMAGE_SECTION_HEADER pSectionHeader) CONST;
+
+	//
+	VOID FinalizeSection(_In_ DWORD dwPageSize, _In_ PIMAGE_NT_HEADERS pNtHeader, _In_ SectionAttribute&& SectionAttribute_, _In_ BOOL bForceDiscard) CONST;
+
+	//
+	VOID InvokeTLS(_In_ DWORD pCode) CONST;
+
+	//
+	BOOL ExcuteEntryPoint(_In_ UCHAR* pCode) CONST;
 private:
 	CONST PIMAGE_DOS_HEADER GetDosHeader() CONST;
 

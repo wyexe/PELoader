@@ -9,17 +9,14 @@ int main()
 {
 	CPELoader Loader;
 
-	FARPROC pAddr1 = ::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "MessageBoxA");
-	LPVOID pAddr2 = CPELoader::GetDLLAddress(reinterpret_cast<DWORD>(::GetModuleHandleW(L"user32.dll")), "MessageBoxA");
-
-	if (Loader.SetContent(LR"(D:\user32.dll)"))
+	//FARPROC pAddr1 = ::GetProcAddress(::GetModuleHandleW(L"user32.dll"), "MessageBoxA");
+	//LPVOID pAddr2 = CPELoader::GetDLLAddress(reinterpret_cast<DWORD>(::GetModuleHandleW(L"user32.dll")), "MessageBoxA");
+	
+	if (Loader.SetContent(LR"(D:\TestDLL.dll)"))
 	{
 		//std::map<DWORD, CPELoader::ExportTable> Vec;
 		//Loader.GetMapExportTable(Vec);
-
-		//std::vector<CPELoader::ImportTable> Vec;
-		//Loader.GetVecImportTable(Vec);
-		
+		::MessageBoxW(NULL, Loader._LoadLibrary() ? L"Succ" : L"Err", L"", NULL);
 	}
 	
 	

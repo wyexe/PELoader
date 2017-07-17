@@ -249,7 +249,7 @@ LPVOID CPELoader::GetDLLAddress(_In_ DWORD hModule, _In_ LPCSTR pszFunName)
 	return nullptr;
 }
 
-
+ 
 BOOL CPELoader::_LoadLibrary()
 {
 	auto pNtHeader = GetNtHeader();
@@ -270,7 +270,7 @@ BOOL CPELoader::_LoadLibrary()
 		return FALSE;
 
 	//
-	if (CopySection(reinterpret_cast<UCHAR*>(pCode), pNewDosHeader))
+	if (!CopySection(reinterpret_cast<UCHAR*>(pCode), pNewDosHeader))
 		return FALSE;
 
 	//
@@ -285,10 +285,9 @@ BOOL CPELoader::_LoadLibrary()
 	// UnUseful
 	//if (!ReBuileExportTable(reinterpret_cast<DWORD>(pCode), pNewDosHeader))
 	//	return FALSE;
-
-
-
-	return TRUE;
+	//ReBuileSection(pNewDosHeader);
+	InvokeTLS(reinterpret_cast<DWORD>(pCode));
+	return ExcuteEntryPoint(reinterpret_cast<UCHAR*>(pCode));
 }
 
 DWORD CPELoader::GetAlignedImageSize() CONST
@@ -318,7 +317,7 @@ DWORD CPELoader::GetSectionEndRva() CONST
 	auto pSectionHeader = IMAGE_FIRST_SECTION(pNtHeader);
 
 	DWORD dwSectionEnd = NULL;
-	for (decltype(IMAGE_FILE_HEADER::NumberOfSections) i = 0; i < pNtHeader->FileHeader.NumberOfSections; ++i)
+	for (decltype(IMAGE_FILE_HEADER::NumberOfSections) i = 0; i < pNtHeader->FileHeader.NumberOfSections; ++i,++pSectionHeader)
 	{
 		DWORD dwValue = NULL;
 		if (pSectionHeader->SizeOfRawData == 0)
@@ -333,18 +332,18 @@ DWORD CPELoader::GetSectionEndRva() CONST
 
 LPVOID CPELoader::AllocAlignedCodeContent() CONST
 {
-	// if DLL Size = 10KB, but AlignedImageSize may = 16KB
+	// if DLL Size = 10KB, but AlignedImageSize may = 16KB,  make ImageSize Aligned to System.PageSize
 	DWORD dwAlignedImageSize = GetAlignedImageSize();
 	if (dwAlignedImageSize == NULL)
 		return nullptr;
 
 
 	// Try to Alloc Contiguous Memory begin of ImageBase
-	auto pCode = ::VirtualAlloc(reinterpret_cast<LPVOID>(GetNtHeader()->OptionalHeader.ImageBase), dwAlignedImageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	auto pCode = ::VirtualAlloc(NULL/*reinterpret_cast<LPVOID>(GetNtHeader()->OptionalHeader.ImageBase)*/, dwAlignedImageSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 	if (pCode == nullptr)
 	{
 		// whatever 
-		pCode = ::VirtualAlloc(NULL, dwAlignedImageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		pCode = ::VirtualAlloc(NULL, dwAlignedImageSize, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 		if (pCode == nullptr)
 		{
 			_SetErrMsg(L"Alloc Memory [%d] Size Faild", dwAlignedImageSize);
@@ -360,7 +359,7 @@ PIMAGE_DOS_HEADER CPELoader::AllocAndCopyPeHeader(LPVOID pCode) CONST
 	auto pNtHeader = GetNtHeader();
 
 	//
-	auto pNewDosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(::VirtualAlloc(pCode, pNtHeader->OptionalHeader.SizeOfHeaders, MEM_COMMIT, PAGE_READWRITE));
+	auto pNewDosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(::VirtualAlloc(pCode, pNtHeader->OptionalHeader.SizeOfHeaders, MEM_COMMIT, PAGE_EXECUTE_READWRITE));
 	if (pNewDosHeader == nullptr)
 	{
 		_SetErrMsg(L"Alloc pHeader = nullptr!");
@@ -392,7 +391,7 @@ BOOL CPELoader::CopySection(_In_ UCHAR* pCode, _In_ PIMAGE_DOS_HEADER pDosHeader
 		{
 			if (pNtHeader->OptionalHeader.SectionAlignment > 0)
 			{
-				auto pSectionBase = ::VirtualAlloc(pCode + pSectionheader->VirtualAddress, pNtHeader->OptionalHeader.SectionAlignment, MEM_COMMIT, PAGE_READWRITE);
+				auto pSectionBase = ::VirtualAlloc(pCode + pSectionheader->VirtualAddress, pNtHeader->OptionalHeader.SectionAlignment, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 				if (pSectionBase == nullptr)
 				{
 					_SetErrMsg(L"VirtualAlloc Section Base Faild! Size[%d], Addr[%X]", pNtHeader->OptionalHeader.SectionAlignment, pCode + pSectionheader->VirtualAddress);
@@ -409,7 +408,7 @@ BOOL CPELoader::CopySection(_In_ UCHAR* pCode, _In_ PIMAGE_DOS_HEADER pDosHeader
 		}
 
 		// Copy Section Content
-		auto pSectionBase = ::VirtualAlloc(pCode + pSectionheader->VirtualAddress, pSectionheader->SizeOfRawData, MEM_COMMIT, PAGE_READWRITE);
+		auto pSectionBase = ::VirtualAlloc(pCode + pSectionheader->VirtualAddress, pSectionheader->SizeOfRawData, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
 		if (pSectionBase == nullptr)
 		{
 			_SetErrMsg(L"VirtualAlloc Section Content Faild! Size[%d], Addr[%X]", pSectionheader->SizeOfRawData, pCode + pSectionheader->VirtualAddress);
@@ -440,20 +439,21 @@ BOOL CPELoader::Relocation(_In_ LONGLONG LocationDelta, _In_ UCHAR* pCode, _In_ 
 		DWORD dwRelocationBase = reinterpret_cast<DWORD>(pCode) + pBaseRelocation->VirtualAddress;
 		USHORT* pRelocationInfo = reinterpret_cast<USHORT*>(reinterpret_cast<DWORD>(pBaseRelocation) + sizeof(IMAGE_BASE_RELOCATION));
 
-		int nMaxSize = (pBaseRelocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / 2;
+		int nMaxSize = (pBaseRelocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / 2; // >> 1
 		for (int i = 0;i < nMaxSize; ++i, ++pRelocationInfo)
 		{
 			DWORD dwOffset = *pRelocationInfo & 0xFFF;
+
 			switch (*pRelocationInfo >> 12)
 			{
 			case IMAGE_REL_BASED_ABSOLUTE:
 				break;
 			case IMAGE_REL_BASED_HIGHLOW: // x86
-				*reinterpret_cast<DWORD*>(pBaseRelocation + dwOffset) += static_cast<DWORD>(LocationDelta);
+				*reinterpret_cast<DWORD*>(dwRelocationBase + dwOffset) += static_cast<DWORD>(LocationDelta);
 				break;
 #ifdef _WIN64
 			case IMAGE_REL_BASED_DIR64: // x64
-				*reinterpret_cast<ULONGLONG*>(pBaseRelocation + dwOffset) += LocationDelta;
+				*reinterpret_cast<ULONGLONG*>(dwRelocationBase + dwOffset) += LocationDelta;
 				break;
 #endif // _WIN64
 			
@@ -471,11 +471,11 @@ BOOL CPELoader::Relocation(_In_ LONGLONG LocationDelta, _In_ UCHAR* pCode, _In_ 
 BOOL CPELoader::ReBuileImportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST
 {
 	auto pNtHeader = GetNtHeader(pDosHeader);
-	auto pImportDirectory = reinterpret_cast<PIMAGE_DATA_DIRECTORY>(GetDataDirectory(pNtHeader->OptionalHeader.DataDirectory, IMAGE_DIRECTORY_ENTRY_IMPORT));
-	if (pImportDirectory->Size == 0)
+	auto pImortDescipor = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress + pCode);
+	if (pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].Size == 0)
 		return TRUE;
 
-	for (auto pImortDescipor = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(pCode + pImportDirectory->VirtualAddress); pImortDescipor->FirstThunk != NULL; pImortDescipor++)
+	for (; pImortDescipor->FirstThunk != NULL; pImortDescipor++)
 	{
 		// repalace to _LoadLibrary?
 		CONST CHAR* pszDLLName = reinterpret_cast<CONST CHAR*>(pCode + pImortDescipor->Name);
@@ -534,25 +534,145 @@ BOOL CPELoader::ReBuileImportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDos
 	return TRUE;
 }
 
-BOOL CPELoader::ReBuileExportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST
+BOOL CPELoader::ReBuileExportTable(_In_ DWORD , _In_ PIMAGE_DOS_HEADER ) CONST
 {
 	return TRUE;
 }
 
-BOOL CPELoader::ReBuileSection(_In_ DWORD dwPageSize, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST
+BOOL CPELoader::ReBuileSection(_In_ PIMAGE_DOS_HEADER pDosHeader) CONST
 {
 	auto pNtHeader = GetNtHeader(pDosHeader);
+	auto pSectionHeader = IMAGE_FIRST_SECTION(pNtHeader);
 	
+	SYSTEM_INFO SysInfo;
+	::GetNativeSystemInfo(&SysInfo);
+
+	// Convert DLL Attribute to Memory Attribute
+	SectionAttribute&& SectionAttribute_ = FillSectionAttribute(pNtHeader, nullptr, SysInfo.dwPageSize, pSectionHeader++);
+	FinalizeSection(SysInfo.dwPageSize, pNtHeader, std::move(SectionAttribute_), FALSE);
+	for (DWORD i = 1; i < pNtHeader->FileHeader.NumberOfSections ;++i, ++pSectionHeader)
+	{
+		// how to Force Discard Last Section ?	
+		SectionAttribute_ = FillSectionAttribute(pNtHeader, &SectionAttribute_, SysInfo.dwPageSize, pSectionHeader);
+		FinalizeSection(SysInfo.dwPageSize, pNtHeader, std::move(SectionAttribute_), FALSE);
+	}
+
+	return TRUE;
+}
+
+CPELoader::SectionAttribute&& CPELoader::FillSectionAttribute(_In_ PIMAGE_NT_HEADERS pNtHeader, _In_ CONST SectionAttribute* pSectionAttribute, _In_ DWORD dwPageSize, _In_ PIMAGE_SECTION_HEADER pSectionHeader) CONST
+{
 #ifdef _WIN64
 	UINT ImageOffset = static_cast<UINT>(pNtHeader->OptionalHeader.ImageBase & 0xffffffff00000000);
 #else
 	UINT ImageOffset = 0;
 #endif // _WIN64
 
-	// Convert DLL Attribute to Memory Attribute
+	SectionAttribute SectionAttribute_;
+	// Convert File RVA to Memory RVA
+	SectionAttribute_.dwSectionRVA = pSectionHeader->Misc.PhysicalAddress | ImageOffset;
+	// Set Section Aligned = System Page Aligned
+	SectionAttribute_.dwSectionAligned = SectionAttribute_.dwSectionRVA & ~(dwPageSize - 1);
 
-	// ..................
+	DWORD dwSectionSize = 0;
+	if (pSectionHeader->SizeOfRawData != 0)
+		dwSectionSize = pSectionHeader->SizeOfRawData;
+	else
+	{
+		if (pSectionHeader->Characteristics & IMAGE_SCN_CNT_INITIALIZED_DATA) // include Initialized Data in Secion
+			dwSectionSize = pNtHeader->OptionalHeader.SizeOfInitializedData;
+		else if (pSectionHeader->Characteristics & IMAGE_SCN_CNT_UNINITIALIZED_DATA) // include UnInitialized Data in Secion
+			dwSectionSize = pNtHeader->OptionalHeader.SizeOfUninitializedData;
+	}
 
+	if (pSectionAttribute == nullptr)
+	{
+		SectionAttribute_.dwCharacteristics = pSectionHeader->Characteristics;
+		SectionAttribute_.dwSectionSize = dwSectionSize;
+	}
+	else
+	{
+		if (SectionAttribute_.dwSectionRVA == pSectionAttribute->dwSectionRVA || (pSectionAttribute->dwSectionRVA + pSectionAttribute->dwSectionSize > SectionAttribute_.dwSectionRVA))
+		{
+			if (!(pSectionHeader->Characteristics & IMAGE_SCN_MEM_DISCARDABLE) || !(pSectionAttribute->dwCharacteristics & IMAGE_SCN_MEM_DISCARDABLE))
+				SectionAttribute_.dwCharacteristics = (pSectionAttribute->dwCharacteristics | pSectionHeader->Characteristics) & ~IMAGE_SCN_MEM_DISCARDABLE;
+			else
+				SectionAttribute_.dwCharacteristics |= pSectionHeader->Characteristics;
+		}
+		
+		SectionAttribute_.dwSectionSize = SectionAttribute_.dwSectionRVA + dwSectionSize - pSectionAttribute->dwSectionRVA;
+	}
+
+	return std::move(SectionAttribute_);
+}
+
+VOID CPELoader::FinalizeSection(_In_ DWORD dwPageSize, _In_ PIMAGE_NT_HEADERS pNtHeader, _In_ SectionAttribute&& SectionAttribute_, _In_ BOOL bForceDiscard) CONST
+{
+	if (SectionAttribute_.dwSectionSize == 0)
+		return;
+	else if (SectionAttribute_.dwCharacteristics & IMAGE_SCN_MEM_DISCARDABLE)
+	{
+		/*if (SectionAttribute_.dwSectionRVA != SectionAttribute_.dwSectionAligned)
+			return;
+
+		if (bForceDiscard || pNtHeader->OptionalHeader.SectionAlignment == dwPageSize || (SectionAttribute_.dwSectionSize % dwPageSize) == 0)
+		{
+			::VirtualFree(reinterpret_cast<LPVOID>(SectionAttribute_.dwSectionRVA), SectionAttribute_.dwSectionSize, MEM_DECOMMIT);
+		}*/
+
+		return;
+	}
+
+
+	//DWORD dwProtect = SectionAttribute_.dwCharacteristics & IMAGE_SCN_MEM_EXECUTE ? PAGE_EXECUTE : 0;
+	//dwProtect |= SectionAttribute_.dwCharacteristics & IMAGE_SCN_MEM_READ ? PAGE_EXECUTE_READ : 0;
+	//dwProtect |= SectionAttribute_.dwCharacteristics & IMAGE_SCN_MEM_WRITE ? PAGE_EXECUTE_WRITECOPY : 0;
+	DWORD dwProtect = PAGE_EXECUTE_READWRITE;
+	if (SectionAttribute_.dwCharacteristics & IMAGE_SCN_MEM_NOT_CACHED)
+		dwProtect |= PAGE_NOCACHE;
+
+	DWORD dwValue = 0;
+	::VirtualProtect(reinterpret_cast<LPVOID>(SectionAttribute_.dwSectionRVA), SectionAttribute_.dwSectionSize, dwProtect, &dwValue);
+}
+
+VOID CPELoader::InvokeTLS(_In_ DWORD pCode) CONST
+{
+	auto pNtHeader = GetNtHeader(reinterpret_cast<PIMAGE_DOS_HEADER>(pCode));
+	if (pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress == NULL)
+		return;
+
+	
+	auto pTlsDirectory = reinterpret_cast<PIMAGE_TLS_DIRECTORY>(pCode + pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress);
+	auto pTlsCallBack = reinterpret_cast<PIMAGE_TLS_CALLBACK *>(pTlsDirectory->AddressOfCallBacks);
+	while (pTlsCallBack && *pTlsCallBack)
+	{
+		(*pTlsCallBack)(reinterpret_cast<LPVOID>(pCode), DLL_PROCESS_ATTACH, NULL);
+		++pTlsCallBack;
+	}
+}
+
+BOOL CPELoader::ExcuteEntryPoint(_In_ UCHAR* pCode) CONST
+{
+	auto pNtHeader = GetNtHeader(reinterpret_cast<PIMAGE_DOS_HEADER>(pCode));
+	if (pNtHeader->OptionalHeader.AddressOfEntryPoint == NULL)
+	{
+		_SetErrMsg(L"AddressOfEntryPoint = 0!");
+		::VirtualFree(pCode, 0, MEM_RELEASE);
+		return FALSE;
+	}
+
+	using DLLEntryProc = BOOL(APIENTRY *)(HMODULE hModule, DWORD dwReason, LPVOID lpReserved);
+	DLLEntryProc DLLEntry = reinterpret_cast<DLLEntryProc>(pCode + pNtHeader->OptionalHeader.AddressOfEntryPoint);
+	
+	__try
+	{
+		DLLEntry(reinterpret_cast<HMODULE>(pCode), DLL_PROCESS_ATTACH, NULL);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		::MessageBoxW(NULL, L"aaa", L"", NULL);
+	}
+	
 	return TRUE;
 }
 
