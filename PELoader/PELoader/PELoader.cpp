@@ -75,7 +75,7 @@ BOOL CPELoader::IsPEFile() CONST
 	}
 
 	return TRUE;
-}
+} 
 
 BOOL CPELoader::GetVecImportTable(_Out_ std::vector<ImportTable>& Vec) CONST
 {
@@ -100,7 +100,7 @@ BOOL CPELoader::GetVecImportTable(_Out_ std::vector<ImportTable>& Vec) CONST
 		ImportTable_.wsDLLName = MyTools::CCharacter::ASCIIToUnicode(std::string(szName));
 		DWORD* pdwThunk = reinterpret_cast<DWORD*>(RVAToPtr(pImportDesc->OriginalFirstThunk != NULL ? pImportDesc->OriginalFirstThunk : pImportDesc->FirstThunk));
 
-		DWORD dwThunkValue = NULL;
+		DWORD dwThunkValue = NULL; 
 		while ((dwThunkValue = MyTools::CCharacter::ReadDWORD(reinterpret_cast<UINT_PTR>(pdwThunk))) != NULL)
 		{
 			ImportDLLTable DLLTable;
@@ -125,22 +125,22 @@ BOOL CPELoader::GetVecImportTable(_Out_ std::vector<ImportTable>& Vec) CONST
 	return TRUE;
 }
 
-BOOL CPELoader::GetMapExportTable(_Out_ std::map<DWORD, ExportTable>& MapExportTable) CONST
+BOOL CPELoader::GetMapExportTable(_Out_ std::map<UINT_PTR, ExportTable>& MapExportTable) CONST
 {
 	CONST auto pExportDirectory = reinterpret_cast<CONST PIMAGE_EXPORT_DIRECTORY>(GetDataDirectory(IMAGE_DIRECTORY_ENTRY_EXPORT));
 	if (pExportDirectory == nullptr)
 	{
 		_SetErrMsg(L"pExportDirectory = nullptr");
 		return FALSE;
-	}
+	} 
 
-	auto dwNameRva = reinterpret_cast<DWORD>(RVAToPtr(pExportDirectory->AddressOfNames));
+	auto dwNameRva = reinterpret_cast<UINT_PTR>(RVAToPtr(pExportDirectory->AddressOfNames));
 	for (DWORD i = 0;i < pExportDirectory->NumberOfFunctions; ++i)
 	{
 		ExportTable ExportTable_;
 		ExportTable_.dwOrdinal = pExportDirectory->Base + i;
 
-		auto dwValue = (DWORD)RVAToPtr(pExportDirectory->AddressOfFunctions + i * 4);
+		auto dwValue = reinterpret_cast<UINT_PTR>(RVAToPtr(pExportDirectory->AddressOfFunctions + i * 4));
 		ExportTable_.dwMethodPtr = MyTools::CCharacter::ReadDWORD(dwValue);
 		MapExportTable.insert(std::make_pair(ExportTable_.dwOrdinal, std::move(ExportTable_)));
 	}
@@ -161,7 +161,7 @@ BOOL CPELoader::GetMapExportTable(_Out_ std::map<DWORD, ExportTable>& MapExportT
 			continue;
 		}
 
-		auto dwOrdinals = reinterpret_cast<DWORD>(RVAToPtr(pExportDirectory->AddressOfNameOrdinals + i * sizeof(WORD)));
+		auto dwOrdinals = reinterpret_cast<UINT_PTR>(RVAToPtr(pExportDirectory->AddressOfNameOrdinals + i * sizeof(WORD)));
 		dwOrdinals = static_cast<decltype(ExportTable::dwOrdinal)>(MyTools::CCharacter::ReadWORD(dwOrdinals)) + pExportDirectory->Base;
 
 		auto itr = MapExportTable.find(dwOrdinals);
@@ -174,7 +174,7 @@ BOOL CPELoader::GetMapExportTable(_Out_ std::map<DWORD, ExportTable>& MapExportT
 	return TRUE;
 }
 
-LPVOID CPELoader::GetDLLAddress(_In_ DWORD hModule, _In_ LPCSTR pszFunName)
+LPVOID CPELoader::GetDLLAddress(_In_ UINT_PTR hModule, _In_ LPCSTR pszFunName)
 {
 	PIMAGE_DOS_HEADER pDosHeader = reinterpret_cast<PIMAGE_DOS_HEADER>(hModule);
 	if (pDosHeader == nullptr)
@@ -193,9 +193,9 @@ LPVOID CPELoader::GetDLLAddress(_In_ DWORD hModule, _In_ LPCSTR pszFunName)
 	PIMAGE_EXPORT_DIRECTORY pExportDirectory = reinterpret_cast<PIMAGE_EXPORT_DIRECTORY>(pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress + hModule);
 
 	// By Ordinals?
-	if ((reinterpret_cast<DWORD>(pszFunName) & 0xFFFF0000) == 0)
+	if ((reinterpret_cast<UINT_PTR>(pszFunName) & 0xFFFF0000) == 0)
 	{
-		DWORD dwOrdinals = reinterpret_cast<DWORD>(pszFunName);
+		auto dwOrdinals = reinterpret_cast<UINT_PTR>(pszFunName);
 		if (dwOrdinals >= hModule)
 		{
 			_SetErrMsg(L"dwOrdinals[%X] > hModule[%X]", dwOrdinals, hModule);
@@ -208,7 +208,7 @@ LPVOID CPELoader::GetDLLAddress(_In_ DWORD hModule, _In_ LPCSTR pszFunName)
 		}
 
 		// to VA
-		DWORD dwMethodPtr = pExportDirectory->AddressOfFunctions + hModule;
+		UINT_PTR dwMethodPtr = pExportDirectory->AddressOfFunctions + hModule;
 
 		// VA Function[Ordinal]
 		return reinterpret_cast<LPVOID>(MyTools::CCharacter::ReadDWORD(pExportDirectory->Base - dwMethodPtr) + hModule);
@@ -279,14 +279,14 @@ BOOL CPELoader::_LoadLibrary()
 		return FALSE;
 
 	//
-	if (!ReBuileImportTable(reinterpret_cast<DWORD>(pCode), pNewDosHeader))
+	if (!ReBuileImportTable(reinterpret_cast<UINT_PTR>(pCode), pNewDosHeader))
 		return FALSE;
 
 	// UnUseful
 	//if (!ReBuileExportTable(reinterpret_cast<DWORD>(pCode), pNewDosHeader))
 	//	return FALSE;
 	//ReBuileSection(pNewDosHeader);
-	InvokeTLS(reinterpret_cast<DWORD>(pCode));
+	InvokeTLS(reinterpret_cast<UINT_PTR>(pCode));
 	return ExcuteEntryPoint(reinterpret_cast<UCHAR*>(pCode));
 }
 
@@ -330,7 +330,7 @@ DWORD CPELoader::GetSectionEndRva() CONST
 	return dwSectionEnd;
 }
 
-LPVOID CPELoader::AllocAlignedCodeContent() CONST
+LPVOID CPELoader::AllocAlignedCodeContent() CONST 
 {
 	// if DLL Size = 10KB, but AlignedImageSize may = 16KB,  make ImageSize Aligned to System.PageSize
 	DWORD dwAlignedImageSize = GetAlignedImageSize();
@@ -399,7 +399,7 @@ BOOL CPELoader::CopySection(_In_ UCHAR* pCode, _In_ PIMAGE_DOS_HEADER pDosHeader
 				}
 
 				pSectionBase = pCode + pSectionheader->VirtualAddress;
-				pSectionheader->Misc.PhysicalAddress = reinterpret_cast<DWORD>(pSectionBase);
+				pSectionheader->Misc.PhysicalAddress = static_cast<DWORD>(reinterpret_cast<UINT_PTR>(pSectionBase));
 				ZeroMemory(pSectionBase, pNtHeader->OptionalHeader.SectionAlignment);
 			}
 
@@ -417,7 +417,7 @@ BOOL CPELoader::CopySection(_In_ UCHAR* pCode, _In_ PIMAGE_DOS_HEADER pDosHeader
 
 		pSectionBase = pCode + pSectionheader->VirtualAddress;
 		memcpy(pSectionBase, reinterpret_cast<CHAR*>(_pvFileContent) + pSectionheader->PointerToRawData, pSectionheader->SizeOfRawData);
-		pSectionheader->Misc.PhysicalAddress = reinterpret_cast<DWORD>(pSectionBase);
+		pSectionheader->Misc.PhysicalAddress = static_cast<DWORD>(reinterpret_cast<UINT_PTR>(pSectionBase));
 	}
 
 	return TRUE;
@@ -436,8 +436,8 @@ BOOL CPELoader::Relocation(_In_ LONGLONG LocationDelta, _In_ UCHAR* pCode, _In_ 
 	auto pBaseRelocation = reinterpret_cast<PIMAGE_BASE_RELOCATION>(pCode + pDirectoryBaseReloc->VirtualAddress);
 	while (pBaseRelocation->VirtualAddress != 0)
 	{
-		DWORD dwRelocationBase = reinterpret_cast<DWORD>(pCode) + pBaseRelocation->VirtualAddress;
-		USHORT* pRelocationInfo = reinterpret_cast<USHORT*>(reinterpret_cast<DWORD>(pBaseRelocation) + sizeof(IMAGE_BASE_RELOCATION));
+		auto dwRelocationBase = reinterpret_cast<UINT_PTR>(pCode) + pBaseRelocation->VirtualAddress;
+		USHORT* pRelocationInfo = reinterpret_cast<USHORT*>(reinterpret_cast<UINT_PTR>(pBaseRelocation) + sizeof(IMAGE_BASE_RELOCATION));
 
 		int nMaxSize = (pBaseRelocation->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / 2; // >> 1
 		for (int i = 0;i < nMaxSize; ++i, ++pRelocationInfo)
@@ -449,7 +449,7 @@ BOOL CPELoader::Relocation(_In_ LONGLONG LocationDelta, _In_ UCHAR* pCode, _In_ 
 			case IMAGE_REL_BASED_ABSOLUTE:
 				break;
 			case IMAGE_REL_BASED_HIGHLOW: // x86
-				*reinterpret_cast<DWORD*>(dwRelocationBase + dwOffset) += static_cast<DWORD>(LocationDelta);
+				*reinterpret_cast<UINT_PTR*>(dwRelocationBase + dwOffset) += static_cast<UINT_PTR>(LocationDelta);
 				break;
 #ifdef _WIN64
 			case IMAGE_REL_BASED_DIR64: // x64
@@ -462,13 +462,13 @@ BOOL CPELoader::Relocation(_In_ LONGLONG LocationDelta, _In_ UCHAR* pCode, _In_ 
 			}
 		}
 
-		pBaseRelocation = reinterpret_cast<PIMAGE_BASE_RELOCATION>(reinterpret_cast<DWORD>(pBaseRelocation) + pBaseRelocation->SizeOfBlock);
+		pBaseRelocation = reinterpret_cast<PIMAGE_BASE_RELOCATION>(reinterpret_cast<UINT_PTR>(pBaseRelocation) + pBaseRelocation->SizeOfBlock);
 	}
 
 	return TRUE;
 }
 
-BOOL CPELoader::ReBuileImportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST
+BOOL CPELoader::ReBuileImportTable(_In_ UINT_PTR pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST
 {
 	auto pNtHeader = GetNtHeader(pDosHeader);
 	auto pImortDescipor = reinterpret_cast<PIMAGE_IMPORT_DESCRIPTOR>(pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress + pCode);
@@ -486,19 +486,19 @@ BOOL CPELoader::ReBuileImportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDos
 			return FALSE;
 		}
 
-		DWORD* pdwThunk = nullptr;
-		DWORD* pdwFunc = nullptr;
+		UINT_PTR* pdwThunk = nullptr;
+		UINT_PTR* pdwFunc = nullptr;
 
 		// OriginalFirstThunk -> INT Table
 		// FirstThunk -> IAT Table
 		if (pImortDescipor->OriginalFirstThunk)
 		{
-			pdwThunk = reinterpret_cast<DWORD*>(pCode + pImortDescipor->OriginalFirstThunk); 
-			pdwFunc = reinterpret_cast<DWORD*>(pCode + pImortDescipor->FirstThunk);
+			pdwThunk = reinterpret_cast<UINT_PTR*>(pCode + pImortDescipor->OriginalFirstThunk);
+			pdwFunc = reinterpret_cast<UINT_PTR*>(pCode + pImortDescipor->FirstThunk);
 		}
 		else
 		{
-			pdwFunc = pdwThunk = reinterpret_cast<DWORD*>(pCode + pImortDescipor->FirstThunk);
+			pdwFunc = pdwThunk = reinterpret_cast<UINT_PTR*>(pCode + pImortDescipor->FirstThunk);
 		}
 
 		for (; *pdwThunk != NULL;pdwFunc++, pdwThunk++)
@@ -507,7 +507,7 @@ BOOL CPELoader::ReBuileImportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDos
 			{
 				// For Original
 				auto dwOriginal = *pdwThunk & 0xFFFF;
-				*pdwFunc = reinterpret_cast<DWORD>(::GetProcAddress(hmDLL, reinterpret_cast<LPCSTR>(dwOriginal)));
+				*pdwFunc = reinterpret_cast<UINT_PTR>(::GetProcAddress(hmDLL, reinterpret_cast<LPCSTR>(dwOriginal)));
 				if (*pdwFunc == NULL)
 				{
 					_SetErrMsg(L"DLL[%s] Proc Address By Original[%X] Load Faild!", 
@@ -519,7 +519,7 @@ BOOL CPELoader::ReBuileImportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDos
 			{
 				// For Name
 				PIMAGE_IMPORT_BY_NAME pImportName = reinterpret_cast<PIMAGE_IMPORT_BY_NAME>(pCode + *pdwThunk/*RVA*/);
-				*pdwFunc = reinterpret_cast<DWORD>(::GetProcAddress(hmDLL, pImportName->Name));
+				*pdwFunc = reinterpret_cast<UINT_PTR>(::GetProcAddress(hmDLL, pImportName->Name));
 				if (*pdwFunc == NULL)
 				{
 					_SetErrMsg(L"DLL[%s] Proc Address By Name[%X] Load Faild!", 
@@ -534,7 +534,7 @@ BOOL CPELoader::ReBuileImportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDos
 	return TRUE;
 }
 
-BOOL CPELoader::ReBuileExportTable(_In_ DWORD , _In_ PIMAGE_DOS_HEADER ) CONST
+BOOL CPELoader::ReBuileExportTable(_In_ UINT_PTR, _In_ PIMAGE_DOS_HEADER ) CONST
 {
 	return TRUE;
 }
@@ -572,7 +572,7 @@ CPELoader::SectionAttribute&& CPELoader::FillSectionAttribute(_In_ PIMAGE_NT_HEA
 	// Convert File RVA to Memory RVA
 	SectionAttribute_.dwSectionRVA = pSectionHeader->Misc.PhysicalAddress | ImageOffset;
 	// Set Section Aligned = System Page Aligned
-	SectionAttribute_.dwSectionAligned = SectionAttribute_.dwSectionRVA & ~(dwPageSize - 1);
+	SectionAttribute_.dwSectionAligned = static_cast<DWORD>(SectionAttribute_.dwSectionRVA) & ~(dwPageSize - 1);
 
 	DWORD dwSectionSize = 0;
 	if (pSectionHeader->SizeOfRawData != 0)
@@ -600,7 +600,7 @@ CPELoader::SectionAttribute&& CPELoader::FillSectionAttribute(_In_ PIMAGE_NT_HEA
 				SectionAttribute_.dwCharacteristics |= pSectionHeader->Characteristics;
 		}
 		
-		SectionAttribute_.dwSectionSize = SectionAttribute_.dwSectionRVA + dwSectionSize - pSectionAttribute->dwSectionRVA;
+		SectionAttribute_.dwSectionSize = static_cast<DWORD>(SectionAttribute_.dwSectionRVA) + dwSectionSize - static_cast<DWORD>(pSectionAttribute->dwSectionRVA);
 	}
 
 	return std::move(SectionAttribute_);
@@ -635,7 +635,7 @@ VOID CPELoader::FinalizeSection(_In_ DWORD dwPageSize, _In_ PIMAGE_NT_HEADERS pN
 	::VirtualProtect(reinterpret_cast<LPVOID>(SectionAttribute_.dwSectionRVA), SectionAttribute_.dwSectionSize, dwProtect, &dwValue);
 }
 
-VOID CPELoader::InvokeTLS(_In_ DWORD pCode) CONST
+VOID CPELoader::InvokeTLS(_In_ UINT_PTR pCode) CONST
 {
 	auto pNtHeader = GetNtHeader(reinterpret_cast<PIMAGE_DOS_HEADER>(pCode));
 	if (pNtHeader->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress == NULL)
@@ -695,7 +695,7 @@ CONST PIMAGE_NT_HEADERS CPELoader::GetNtHeader() CONST
 
 CONST PIMAGE_NT_HEADERS CPELoader::GetNtHeader(_In_ CONST PIMAGE_DOS_HEADER pDosHeader) CONST
 {
-	auto lgOffset = pDosHeader->e_lfanew + reinterpret_cast<decltype(pDosHeader->e_lfanew)>(pDosHeader);
+	auto lgOffset = pDosHeader->e_lfanew + reinterpret_cast<UINT_PTR>(pDosHeader);
 	return reinterpret_cast<CONST PIMAGE_NT_HEADERS>(lgOffset);
 }
 

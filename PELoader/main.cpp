@@ -14,8 +14,12 @@ int main()
 	
 	if (Loader.SetContent(LR"(D:\TestDLL.dll)"))
 	{
-		//std::map<DWORD, CPELoader::ExportTable> Vec;
-		//Loader.GetMapExportTable(Vec);
+		std::map<UINT_PTR, CPELoader::ExportTable> Vec;
+		Loader.GetMapExportTable(Vec);
+
+		std::vector<CPELoader::ImportTable> Vec1;
+		Loader.GetVecImportTable(Vec1);
+
 		::MessageBoxW(NULL, Loader._LoadLibrary() ? L"Succ" : L"Err", L"", NULL);
 	}
 	

@@ -40,10 +40,10 @@ public:
 	BOOL GetVecImportTable(_Out_ std::vector<ImportTable>& Vec) CONST;
 
 	// 
-	BOOL GetMapExportTable(_Out_ std::map<DWORD, ExportTable>& MapExportTable) CONST;
+	BOOL GetMapExportTable(_Out_ std::map<UINT_PTR, ExportTable>& MapExportTable) CONST;
 
 	//
-	static LPVOID GetDLLAddress(_In_ DWORD hModule, _In_ LPCSTR pszFunName);
+	static LPVOID GetDLLAddress(_In_ UINT_PTR hModule, _In_ LPCSTR pszFunName);
 
 	//
 	BOOL _LoadLibrary();
@@ -52,7 +52,7 @@ private:
 	{
 		DWORD dwCharacteristics;
 		DWORD dwSectionSize;
-		DWORD dwSectionRVA;
+		UINT_PTR dwSectionRVA;
 		DWORD dwSectionAligned;
 	};
 
@@ -75,10 +75,10 @@ private:
 	BOOL Relocation(_In_ LONGLONG LocationDelta, _In_ UCHAR* pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
 
 	// 
-	BOOL ReBuileImportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
+	BOOL ReBuileImportTable(_In_ UINT_PTR pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
 
 	//
-	BOOL ReBuileExportTable(_In_ DWORD pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
+	BOOL ReBuileExportTable(_In_ UINT_PTR pCode, _In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
 
 	//
 	BOOL ReBuileSection(_In_ PIMAGE_DOS_HEADER pDosHeader) CONST;
@@ -90,7 +90,7 @@ private:
 	VOID FinalizeSection(_In_ DWORD dwPageSize, _In_ PIMAGE_NT_HEADERS pNtHeader, _In_ SectionAttribute&& SectionAttribute_, _In_ BOOL bForceDiscard) CONST;
 
 	//
-	VOID InvokeTLS(_In_ DWORD pCode) CONST;
+	VOID InvokeTLS(_In_ UINT_PTR pCode) CONST;
 
 	//
 	BOOL ExcuteEntryPoint(_In_ UCHAR* pCode) CONST;
