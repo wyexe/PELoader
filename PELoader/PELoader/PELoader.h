@@ -18,6 +18,7 @@ public:
 	struct ImportDLLTable
 	{
 		std::wstring wsAPIName;
+		DWORD		 dwFuncRVA;
 	};
 
 	struct ImportTable
@@ -47,6 +48,7 @@ public:
 
 	//
 	BOOL _LoadLibrary();
+
 private:
 	struct SectionAttribute
 	{
